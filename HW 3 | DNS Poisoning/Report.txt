@@ -1,0 +1,105 @@
+CSE508: Network Security, Spring 2021
+
+Homework 3: DNS Poisoning
+-----------------------------------------------------------------------------------------
+
+
+PART 1 : On-Path DNS Poisoning Attack Tool
+------------------------------------------
+
+In the program 'dnspoison', I have developed a DNS packet injector program captures the traffic from a network interface in promiscuous mode, and injects forged responses to selected DNS A requests with the goal of poisoning the cache of the victim's resolver.
+
+E.g: go run dnspoison.go -i en0 -f poisonedhosts 
+
+Key Points :
+
+:- Incase no network device interface is provided, it selects a default interface (first device encountered) and starts listening to it.
+
+:- It takes a file, which list of IP address and hostname pairs.
+
+:- At the start of program, I read the hostname mapping file provided, initialize a map with hostnames to spoof IP addresses.
+
+:- If the filename is provided, then I filter only the requests which have the matching hostname in the Questions field of the dns layer of the packet. 
+
+:- If filename is not provided ( i.e If '-f' is not specified), dnspoison should sends dns query replies to all observed requests. 
+
+:- We contruct the spoof DNS reply packet having the IP from poisoned hosts file as the parameter. It takes other info from the request packet(like src ports, ips, etc). In case the hostname file is not provided, we map the DNS query answer to Ip address of the attacker (address of the network interface which is currently selected). 
+
+
+PART 2 : The DNS poisoning attack detector
+------------------------------------------
+------------------------------------------
+
+Developed a program (named 'dnsdetect') which captures the traffic from a network interface in promiscuous mode and detects DNS poisoning attack attempts. 
+
+Key Implementation Points
+-------------------------
+The dnsdetect.go program listens to all DNS reply packets.
+If tracefile is provided, then it reads from tracefile otherwise checks for input network device. If network device is not provided, it selects a default interface.
+
+For all DNS replies, it extracts transaction Id and caches the DNS info in a Hashmap, with Key as trasaction Id and a structure (Comprising of DNS info).
+
+If it scans any duplicate packet within the time window (30sec) with the same transaction Id, it checks for it in the map. If present, then it prints the payload details in the format. If the transaction id is not present, the program stores the data in the cache.
+
+PURGING THE DATA STORE
+---------------------- 
+Since I am caching the DNS reply packets in a hashmap, as it sniffs more and more packets, the memory usage of the program increases overtime. The program's memory consumption should not increase overtime. In order to handle this, I have implemented a purging policy on the cache. 
+
+Currently the limits on the map size is 1000 Packets and and TTL of 30 seconds. For every new sniffed incoming packet, the program invokes a go-routine (light weight thread). It first checks if the map size is greater than threshold valie. If yes then it scans all the stored packets comparing the timestamp. The packets which are older than TTL (30sec in our case), are evicted. 
+This helps to keep the match size in check.
+
+ASSUMPTIONS:
+> If there is any DNS poisoning attack, the corresponding replies from the server and the attacker, both packets should lie within a time difference of 30 seconds. 
+> The number of packets between DNS response and Spoof response is not more than 1000 and the time difference does not exceed 30 secs.
+
+MUTEX LOCKS
+-----------
+Since we are using concurrent threads to access the map cache, it poses risks for writes to the map.
+Hence I have implemented a mutex as a locking mechanism used to synchronize access to the  Packets cache map.
+
+The program also takes input a string expression which can used to apply BPF filter to monitor only specific traffic payload.
+
+
+SAMPLE RUN | OUTPUT OF THE DNSDETECT TOOL
+----------------------------------------- 
+
+Command:> sudo go run dnsdetect.go -r dnspoison.pcap
+
+Output:> 
+
+2021-04-03 15:50:44.831552 -0700 PDT :> DNS poisoning attempt
+TXID  36646  Request  www.tcpdump.org
+Answer1  [172.24.18.135]
+Answer1  [159.89.89.188 192.139.46.66]
+
+2021-04-03 15:50:53.927542 -0700 PDT :> DNS poisoning attempt
+TXID  60673  Request  www.bankofamerica.com
+Answer1  [172.24.18.135]
+Answer1  [171.161.100.100]
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+REFERENCES: 
+https://github.com/google/gopacket/blob/master/layers/dns.go
+https://pkg.go.dev/github.com/miekg/dns
+https://medium.com/@openmohan/dns-basics-and-building-simple-dns-server-in-go-6cb8e1cfe461
+https://blog.davidvassallo.me/2016/11/03/simple-dns-sniffer-in-golang/
+https://www.devdungeon.com/content/packet-capture-injection-and-analysis-gopacket
+
+
+
+
+
